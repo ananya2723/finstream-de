@@ -1,0 +1,7 @@
+finstream-env/
+__pycache__/
+*.py[cod]
+data/*.db
+data/*.db-*
+.DS_Store
+.git/
