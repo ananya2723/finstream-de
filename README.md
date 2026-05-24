@@ -230,3 +230,16 @@ python market_bronze_consumer.py
 python pipeline_runner.py
 streamlit run dashboard.py
 ```
+## Dashboard Preview
+
+### Real-Time Market Analytics Dashboard
+
+![Market Dashboard](screenshots/dashboard.png)
+
+### Live Kafka + Spark Pipeline
+
+![Pipeline](screenshots/pipeline.png)
+
+### Gold Layer Market Table
+
+![Gold Layer Table](screenshots/gold_layer_table.png)
