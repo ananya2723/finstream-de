@@ -234,7 +234,13 @@ streamlit run dashboard.py
 
 ### Real-Time Market Analytics Dashboard
 
-![Market Dashboard](screenshots/dashboard.png)
+![Market Dashboard](<img width="1646" height="814" alt="pipeline" src="https://github.com/user-attachments/assets/de4d9d20-dd7e-4842-b5ca-0ddd30a6da73" />
+### Gold Layer Market Table
+<img width="1692" height="412" alt="gold_layer_table" src="https://github.com/user-attachments/assets/80477ea4-b687-413d-aa05-3431b384e304" />
+### Live Kafka + Spark Pipeline
+
+<img width="1698" height="966" alt="dashboard" src="https://github.com/user-attachments/assets/637f26da-8e6d-4041-9b4d-eccd8583927a" />
+screenshots/dashboard.png)
 
 ### Live Kafka + Spark Pipeline
 
