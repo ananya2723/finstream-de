@@ -14,8 +14,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-BRONZE_DB = "data/bronze.db"
-SILVER_DB = "data/silver.db"
+from data_quality import build_quality_report, init_quality_table, record_quality_report
+from finstream_config import settings
+
+BRONZE_DB = settings.bronze_db
+SILVER_DB = settings.silver_db
 
 
 def init_silver(conn):
@@ -37,6 +40,7 @@ def init_silver(conn):
             transformed_at  TEXT
         )
     """)
+    init_quality_table(conn)
     conn.commit()
 
 
@@ -80,22 +84,24 @@ def run():
     last_run = get_last_ingested_at(silver_conn)
     print(f"[SILVER] Processing Bronze rows ingested after: {last_run}")
 
-    df = pd.read_sql(
+    raw_df = pd.read_sql(
         "SELECT * FROM raw_transactions WHERE ingested_at > ?",
         bronze_conn, params=(last_run,)
     )
 
-    if df.empty:
+    if raw_df.empty:
         print("[SILVER] No new rows to process.")
         return 0
 
-    print(f"[SILVER] {len(df)} new rows from Bronze.")
+    print(f"[SILVER] {len(raw_df)} new rows from Bronze.")
 
     # --- Clean & Validate ---
+    df = raw_df.copy()
     df = df.drop_duplicates(subset="transaction_id")
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     df = df[df["amount"] > 0].copy()
     df["event_time"] = pd.to_datetime(df["event_time"], errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S")
+    df = df[df["event_time"].notna()].copy()
     df["status"] = df["status"].str.upper().fillna("UNKNOWN")
     df["currency"] = df["currency"].fillna("INR")
     df["city"] = df["city"].fillna("Unknown")
@@ -112,18 +118,22 @@ def run():
     written = 0
     for _, row in df[cols].iterrows():
         try:
-            silver_conn.execute("""
+            cursor = silver_conn.execute("""
                 INSERT OR IGNORE INTO clean_transactions VALUES
                 (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, tuple(row))
-            written += 1
+            written += cursor.rowcount
         except Exception as e:
             print(f"[SILVER] Skip {row['transaction_id']}: {e}")
+
+    report = build_quality_report(raw_df, df)
+    record_quality_report(silver_conn, report)
 
     silver_conn.commit()
     bronze_conn.close()
     silver_conn.close()
     print(f"[SILVER] ✅ Wrote {written} rows to Silver.")
+    print(f"[SILVER] Data quality: {report}")
     return written
 
 

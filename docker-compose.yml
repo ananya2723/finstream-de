@@ -76,6 +76,22 @@ services:
     volumes:
       - ./data:/app/data
 
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finstream-pipeline
+    depends_on:
+      kafka:
+        condition: service_healthy
+      consumer:
+        condition: service_started
+    command: python pipeline_runner.py --interval-seconds 60
+    environment:
+      TRANSFORM_INTERVAL_SECONDS: 60
+    volumes:
+      - ./data:/app/data
+
   dashboard:
     build:
       context: .

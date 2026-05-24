@@ -18,8 +18,10 @@ import pandas as pd
 from datetime import datetime, date
 import hashlib
 
-SILVER_DB = "data/silver.db"
-GOLD_DB   = "data/gold.db"
+from finstream_config import settings
+
+SILVER_DB = settings.silver_db
+GOLD_DB   = settings.gold_db
 
 
 # ─────────────────────────── Schema ───────────────────────────
@@ -83,6 +85,19 @@ CREATE TABLE IF NOT EXISTS agg_hourly_volume (
     txn_count   INTEGER,
     total_amount REAL,
     PRIMARY KEY (agg_date, hour)
+);
+
+CREATE TABLE IF NOT EXISTS data_quality_runs (
+    run_id                  INTEGER PRIMARY KEY,
+    checked_at              TEXT NOT NULL,
+    source_layer            TEXT NOT NULL,
+    target_layer            TEXT NOT NULL,
+    input_rows              INTEGER NOT NULL,
+    duplicate_rows          INTEGER NOT NULL,
+    invalid_amount_rows     INTEGER NOT NULL,
+    invalid_event_time_rows INTEGER NOT NULL,
+    valid_rows              INTEGER NOT NULL,
+    anomaly_rows            INTEGER NOT NULL
 );
 """
 
@@ -149,7 +164,7 @@ def load_fact(gold_conn, df: pd.DataFrame):
             date_id = event_dt.strftime("%Y-%m-%d")
             mid = merchant_id(row["merchant"])
             sk = surrogate_key(row["transaction_id"])
-            gold_conn.execute("""
+            cursor = gold_conn.execute("""
                 INSERT OR IGNORE INTO fact_transactions VALUES
                 (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
@@ -160,7 +175,7 @@ def load_fact(gold_conn, df: pd.DataFrame):
                 int(row["is_anomaly"]), float(row["anomaly_score"]),
                 loaded_at
             ))
-            written += 1
+            written += cursor.rowcount
         except Exception as e:
             print(f"[GOLD] Skip {row.get('transaction_id')}: {e}")
     return written
@@ -191,6 +206,32 @@ def refresh_aggregates(gold_conn):
         GROUP BY date_id, event_hour
     """)
     print("[GOLD] Aggregates refreshed.")
+
+
+def sync_quality_reports(silver_conn, gold_conn):
+    quality_df = pd.read_sql(
+        "SELECT * FROM data_quality_runs ORDER BY run_id DESC LIMIT 20",
+        silver_conn
+    )
+    if quality_df.empty:
+        return
+
+    for _, row in quality_df.iterrows():
+        gold_conn.execute("""
+            INSERT OR REPLACE INTO data_quality_runs VALUES
+            (?,?,?,?,?,?,?,?,?,?)
+        """, (
+            int(row["run_id"]),
+            row["checked_at"],
+            row["source_layer"],
+            row["target_layer"],
+            int(row["input_rows"]),
+            int(row["duplicate_rows"]),
+            int(row["invalid_amount_rows"]),
+            int(row["invalid_event_time_rows"]),
+            int(row["valid_rows"]),
+            int(row["anomaly_rows"]),
+        ))
 
 
 def run():
@@ -231,6 +272,7 @@ def run():
 
     written = load_fact(gold_conn, df)
     refresh_aggregates(gold_conn)
+    sync_quality_reports(silver_conn, gold_conn)
 
     gold_conn.commit()
     silver_conn.close()

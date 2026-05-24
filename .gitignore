@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 venv/
 finstream-env/
+.pytest_cache/
 data/*.db
 data/*.db-*
 .DS_Store

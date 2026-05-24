@@ -4,15 +4,16 @@ Publishes to topic: raw_transactions
 """
 
 import json
-import os
 import random
 import time
 from datetime import datetime
+
+from finstream_config import settings
 from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
 
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-TOPIC = "raw_transactions"
+KAFKA_BROKER = settings.kafka_broker
+TOPIC = settings.kafka_topic
 
 MERCHANTS = [
     "Amazon", "Flipkart", "Swiggy", "Zomato", "Netflix",
@@ -59,6 +60,7 @@ def main():
     while True:
         txn = generate_transaction()
         producer.send(TOPIC, key=txn["account_id"], value=txn)
+        producer.flush()
         print(f"[PRODUCER] → {txn['transaction_id']} | {txn['merchant']} | ₹{txn['amount']}")
         time.sleep(random.uniform(0.5, 1.5))
 

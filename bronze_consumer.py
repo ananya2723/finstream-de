@@ -9,13 +9,15 @@ import os
 import sqlite3
 import time
 from datetime import datetime
+
+from finstream_config import settings
 from kafka import KafkaConsumer
 from kafka.errors import NoBrokersAvailable
 
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-TOPIC = "raw_transactions"
-GROUP_ID = "bronze-ingestion-group"
-BRONZE_DB = "data/bronze.db"
+KAFKA_BROKER = settings.kafka_broker
+TOPIC = settings.kafka_topic
+GROUP_ID = settings.kafka_group_id
+BRONZE_DB = settings.bronze_db
 
 
 def init_bronze():

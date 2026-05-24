@@ -1,30 +1,72 @@
 FinStream DE
 ============
 
-FinStream DE is a small real-time data engineering project for financial
-transactions. It simulates payment events, ingests them through Kafka, stores raw
-events in a Bronze SQLite layer, transforms them into a cleaned Silver layer, and
-loads a Gold star schema for Streamlit analytics.
+FinStream DE is a production-inspired real-time data engineering project for
+financial transaction analytics. It simulates payment events, streams them
+through Kafka, lands raw events in a Bronze layer, validates and anomaly-scores
+records in Silver, models analytics-ready Gold tables, and serves a Streamlit
+dashboard.
+
+This repo is designed as a portfolio project for data engineering roles. It
+demonstrates event ingestion, medallion architecture, dimensional modeling,
+data-quality checks, container orchestration, automated transform runs, and CI.
+
+What It Shows
+-------------
+
+- Kafka producer and consumer for streaming-style ingestion.
+- Bronze, Silver, and Gold data layers using SQLite for local portability.
+- Incremental transforms based on ingestion and load timestamps.
+- Data-quality metrics for duplicates, invalid amounts, invalid timestamps, and
+  valid-row counts.
+- Category-level rolling z-score anomaly detection.
+- Star schema with facts, dimensions, and aggregate tables.
+- Streamlit dashboard reading only from the Gold layer.
+- Docker Compose health checks and a continuous pipeline runner.
+- Pytest coverage and GitHub Actions CI.
 
 Architecture
 ------------
 
-- `transaction_producer.py` publishes simulated transactions to Kafka topic
-  `raw_transactions`.
+```text
+Synthetic transaction producer
+        |
+        v
+Kafka topic: raw_transactions
+        |
+        v
+Bronze: raw immutable events
+        |
+        v
+Silver: cleaned + validated + anomaly scored
+        |
+        v
+Gold: facts + dimensions + aggregates
+        |
+        v
+Streamlit dashboard
+```
+
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+Core Files
+----------
+
+- `transaction_producer.py` publishes simulated transactions to Kafka.
 - `bronze_consumer.py` consumes Kafka events and appends raw records to
   `data/bronze.db`.
-- `bronze_to_silver.py` deduplicates, validates, cleans, and anomaly-scores
-  records into `data/silver.db`.
-- `silver_to_gold.py` builds dimensions, facts, and aggregate tables in
-  `data/gold.db`.
-- `dashboard.py` reads only the Gold layer and renders Streamlit analytics.
-- `finstream_dag.py` can run the Bronze-to-Silver and Silver-to-Gold transforms
-  from Airflow.
+- `bronze_to_silver.py` deduplicates, validates, cleans, quality-checks, and
+  anomaly-scores records into `data/silver.db`.
+- `silver_to_gold.py` builds dimensions, facts, aggregate tables, and quality
+  metadata in `data/gold.db`.
+- `pipeline_runner.py` runs the transforms once or continuously.
+- `dashboard.py` reads the Gold layer and renders analytics.
+- `finstream_dag.py` provides an optional Airflow DAG for the transform steps.
 
-Run With Docker
----------------
+Quickstart
+----------
 
-Start Kafka, producer, consumer, Kafka UI, and the dashboard:
+Start the full stack:
 
 ```bash
 docker compose up --build
@@ -35,15 +77,27 @@ Open:
 - Dashboard: http://localhost:8501
 - Kafka UI: http://localhost:8080
 
-In another terminal, run the transformation steps whenever Bronze has data:
+The `pipeline` service refreshes Silver and Gold automatically every 60 seconds.
+To trigger a manual refresh:
 
 ```bash
-python bronze_to_silver.py
-python silver_to_gold.py
+docker compose run --rm dashboard python pipeline_runner.py --once
 ```
 
-Local Run
----------
+Useful Commands
+---------------
+
+```bash
+make build       # build Docker images
+make up          # start services in the background
+make logs        # follow logs
+make transform   # run Bronze -> Silver -> Gold once
+make test        # run pytest locally
+make down        # stop services
+```
+
+Local Development
+-----------------
 
 Install dependencies:
 
@@ -51,14 +105,53 @@ Install dependencies:
 python3 -m venv finstream-env
 source finstream-env/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 The Docker image uses `requirements-docker.txt`, which intentionally excludes
 Airflow. The producer, consumer, transforms, and dashboard do not import Airflow;
 `apache-airflow` is only needed if you want to run `finstream_dag.py` in an
-Airflow environment.
+Airflow environment:
 
-Start Kafka with Docker:
+```bash
+pip install -r requirements-airflow.txt
+```
+
+Run tests:
+
+```bash
+pytest -q
+```
+
+Configuration
+-------------
+
+Runtime settings are environment-driven through `finstream_config.py`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `KAFKA_BROKER` | `localhost:9092` | Kafka bootstrap server |
+| `KAFKA_TOPIC` | `raw_transactions` | Source topic |
+| `KAFKA_GROUP_ID` | `bronze-ingestion-group` | Consumer group |
+| `BRONZE_DB` | `data/bronze.db` | Bronze SQLite path |
+| `SILVER_DB` | `data/silver.db` | Silver SQLite path |
+| `GOLD_DB` | `data/gold.db` | Gold SQLite path |
+| `TRANSFORM_INTERVAL_SECONDS` | `120` | Continuous transform interval |
+
+Interview Talking Points
+------------------------
+
+- Why Bronze is append-only and keeps raw payloads.
+- How Silver applies data-quality gates and idempotent inserts.
+- Why Gold uses dimensional modeling and precomputed aggregates.
+- How Kafka decouples event production from ingestion.
+- How health checks improve container startup reliability.
+- How CI and tests prove the transform contract.
+
+Manual Local Run
+----------------
+
+Start Kafka services:
 
 ```bash
 docker compose up zookeeper kafka kafka-ui
@@ -69,15 +162,6 @@ Then run these in separate terminals:
 ```bash
 python transaction_producer.py
 python bronze_consumer.py
-python bronze_to_silver.py
-python silver_to_gold.py
+python pipeline_runner.py
 streamlit run dashboard.py
 ```
-
-Configuration
--------------
-
-`transaction_producer.py` and `bronze_consumer.py` read `KAFKA_BROKER` from the
-environment. If it is not set, they default to `localhost:9092`.
-
-Docker Compose sets `KAFKA_BROKER=kafka:29092` for the app containers.

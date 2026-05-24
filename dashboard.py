@@ -12,7 +12,9 @@ import plotly.graph_objects as go
 import time
 from datetime import datetime
 
-GOLD_DB = "data/gold.db"
+from finstream_config import settings
+
+GOLD_DB = settings.gold_db
 
 st.set_page_config(
     page_title="FinStream DE — Gold Layer Analytics",
@@ -162,6 +164,13 @@ while True:
         GROUP BY f.account_id ORDER BY total_spend DESC LIMIT 8
     """)
 
+    dq_df = query("""
+        SELECT checked_at, input_rows, duplicate_rows, invalid_amount_rows,
+               invalid_event_time_rows, valid_rows, anomaly_rows
+        FROM data_quality_runs
+        ORDER BY checked_at DESC LIMIT 1
+    """)
+
     with placeholder.container():
         if kpi_df.empty or kpi_df["total_txns"].iloc[0] == 0:
             st.warning("Gold layer is empty — run `python bronze_to_silver.py` and `python silver_to_gold.py` after Bronze has data.")
@@ -190,6 +199,16 @@ while True:
                     </div>""", unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
+
+            if not dq_df.empty:
+                dq = dq_df.iloc[0]
+                st.caption(
+                    "Latest data quality run: "
+                    f"{int(dq['valid_rows'])}/{int(dq['input_rows'])} valid rows, "
+                    f"{int(dq['duplicate_rows'])} duplicates, "
+                    f"{int(dq['invalid_amount_rows'])} invalid amounts, "
+                    f"{int(dq['anomaly_rows'])} anomalies."
+                )
 
             # Charts row 1
             ch1, ch2 = st.columns([3, 2])
