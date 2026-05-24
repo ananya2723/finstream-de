@@ -76,6 +76,36 @@ services:
     volumes:
       - ./data:/app/data
 
+  market-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finstream-market-producer
+    profiles: ["real-data"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: python market_data_producer.py
+    environment:
+      KAFKA_BROKER: kafka:29092
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      MARKET_SYMBOLS: ${MARKET_SYMBOLS:-BINANCE:BTCUSDT,BINANCE:ETHUSDT,AAPL,MSFT,TSLA}
+
+  market-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finstream-market-consumer
+    profiles: ["real-data"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: python market_bronze_consumer.py
+    environment:
+      KAFKA_BROKER: kafka:29092
+    volumes:
+      - ./data:/app/data
+
   pipeline:
     build:
       context: .

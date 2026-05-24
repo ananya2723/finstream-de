@@ -171,6 +171,26 @@ while True:
         ORDER BY checked_at DESC LIMIT 1
     """)
 
+    market_latest_df = query("""
+        SELECT symbol, event_time, price, volume, price_change_pct,
+               is_price_anomaly, anomaly_score, source
+        FROM latest_market_prices
+        ORDER BY symbol
+    """)
+
+    market_bars_df = query("""
+        SELECT symbol, event_minute, close_price, total_volume, tick_count, anomaly_count
+        FROM agg_market_minute_bars
+        ORDER BY event_minute
+    """)
+
+    market_quality_df = query("""
+        SELECT checked_at, input_rows, duplicate_rows, invalid_price_rows,
+               invalid_event_time_rows, valid_rows, anomaly_rows
+        FROM market_quality_runs
+        ORDER BY checked_at DESC LIMIT 1
+    """)
+
     with placeholder.container():
         if kpi_df.empty or kpi_df["total_txns"].iloc[0] == 0:
             st.warning("Gold layer is empty — run `python bronze_to_silver.py` and `python silver_to_gold.py` after Bronze has data.")
@@ -296,6 +316,72 @@ while True:
                         "city":"City","is_anomaly":"Anomaly"
                     }),
                     use_container_width=True, height=280
+                )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("### Real Market Data Gold Layer")
+            if market_latest_df.empty:
+                st.info("No real market ticks loaded yet. Start the real-data profile with FINNHUB_API_KEY to populate market analytics.")
+            else:
+                if not market_quality_df.empty:
+                    mq = market_quality_df.iloc[0]
+                    st.caption(
+                        "Latest market quality run: "
+                        f"{int(mq['valid_rows'])}/{int(mq['input_rows'])} valid ticks, "
+                        f"{int(mq['duplicate_rows'])} duplicates, "
+                        f"{int(mq['invalid_price_rows'])} invalid prices, "
+                        f"{int(mq['anomaly_rows'])} anomalies."
+                    )
+
+                m1, m2, m3, m4 = st.columns(4)
+                market_metrics = [
+                    (len(market_latest_df), "Tracked Symbols"),
+                    (f"{market_latest_df['is_price_anomaly'].sum():.0f}", "Price Anomalies"),
+                    (f"{market_latest_df['price_change_pct'].abs().max():.2f}%", "Max Move"),
+                    (market_latest_df["source"].iloc[0], "Market Source"),
+                ]
+                for col, (val, label) in zip([m1, m2, m3, m4], market_metrics):
+                    with col:
+                        st.markdown(f"""<div class="kpi-box">
+                            <div class="kpi-val">{val}</div>
+                            <div class="kpi-lbl">{label}</div>
+                        </div>""", unsafe_allow_html=True)
+
+                if not market_bars_df.empty:
+                    price_fig = px.line(
+                        market_bars_df,
+                        x="event_minute",
+                        y="close_price",
+                        color="symbol",
+                        title="Minute Close Price"
+                    )
+                    price_fig.update_layout(
+                        plot_bgcolor="#060b14", paper_bgcolor="#060b14",
+                        font=dict(color="#94a3b8", size=10),
+                        height=280, margin=dict(l=0,r=0,t=40,b=0),
+                        xaxis=dict(gridcolor="#0d1526"),
+                        yaxis=dict(gridcolor="#1e3a5f")
+                    )
+                    st.plotly_chart(price_fig, use_container_width=True)
+
+                market_table = market_latest_df.copy()
+                market_table["price"] = market_table["price"].map(lambda x: f"{x:,.4f}")
+                market_table["volume"] = market_table["volume"].map(lambda x: f"{x:,.2f}")
+                market_table["price_change_pct"] = market_table["price_change_pct"].map(lambda x: f"{x:.3f}%")
+                market_table["is_price_anomaly"] = market_table["is_price_anomaly"].map(lambda x: "Yes" if x else "-")
+                st.dataframe(
+                    market_table.rename(columns={
+                        "symbol": "Symbol",
+                        "event_time": "Event Time",
+                        "price": "Price",
+                        "volume": "Volume",
+                        "price_change_pct": "Move",
+                        "is_price_anomaly": "Anomaly",
+                        "anomaly_score": "Score",
+                        "source": "Source",
+                    }),
+                    use_container_width=True,
+                    height=240,
                 )
 
     time.sleep(3)

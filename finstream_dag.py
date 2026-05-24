@@ -1,8 +1,10 @@
 """
 Airflow DAG: finstream_pipeline
 Runs every 2 minutes:
-  1. bronze_to_silver  — clean + anomaly score new Bronze rows
-  2. silver_to_gold    — load into star schema + refresh aggregates
+  1. bronze_to_silver         — clean + anomaly score new transaction rows
+  2. market_bronze_to_silver  — clean + anomaly score new market ticks
+  3. silver_to_gold           — load transactions into star schema
+  4. market_silver_to_gold    — load market facts and minute bars
 
 Place this file in your $AIRFLOW_HOME/dags/ folder.
 """
@@ -47,6 +49,18 @@ with DAG(
         """
     )
 
+    task_market_bronze_to_silver = PythonOperator(
+        task_id="market_bronze_to_silver",
+        python_callable=bronze_to_silver.run_market,
+        doc_md="""
+        **Market Bronze → Silver**
+        - Deduplicates on tick_id
+        - Validates symbol, price, volume, and event timestamp
+        - Computes price-change anomaly score per symbol
+        - Writes cleaned market ticks to silver.db
+        """
+    )
+
     task_silver_to_gold = PythonOperator(
         task_id="silver_to_gold",
         python_callable=silver_to_gold.run,
@@ -58,5 +72,17 @@ with DAG(
         """
     )
 
+    task_market_silver_to_gold = PythonOperator(
+        task_id="market_silver_to_gold",
+        python_callable=silver_to_gold.run_market,
+        doc_md="""
+        **Market Silver → Gold**
+        - Upserts dim_symbol
+        - Loads fact_market_ticks
+        - Refreshes minute bars and latest prices
+        """
+    )
+
     # Pipeline dependency
     task_bronze_to_silver >> task_silver_to_gold
+    task_market_bronze_to_silver >> task_market_silver_to_gold

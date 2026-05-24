@@ -23,7 +23,7 @@ jobs:
 
       - name: Static syntax check
         run: |
-          python -m py_compile transaction_producer.py bronze_consumer.py bronze_to_silver.py silver_to_gold.py dashboard.py pipeline_runner.py
+          python -m py_compile transaction_producer.py bronze_consumer.py market_data_producer.py market_bronze_consumer.py bronze_to_silver.py silver_to_gold.py dashboard.py pipeline_runner.py
 
       - name: Run tests
         run: pytest -q

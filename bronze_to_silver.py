@@ -40,6 +40,33 @@ def init_silver(conn):
             transformed_at  TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS clean_market_ticks (
+            tick_id         TEXT PRIMARY KEY,
+            event_time      TEXT,
+            ingested_at     TEXT,
+            source          TEXT,
+            symbol          TEXT,
+            price           REAL,
+            volume          REAL,
+            price_change_pct REAL DEFAULT 0.0,
+            is_price_anomaly INTEGER DEFAULT 0,
+            anomaly_score   REAL DEFAULT 0.0,
+            transformed_at  TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS market_quality_runs (
+            run_id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            checked_at              TEXT NOT NULL,
+            input_rows              INTEGER NOT NULL,
+            duplicate_rows          INTEGER NOT NULL,
+            invalid_price_rows      INTEGER NOT NULL,
+            invalid_event_time_rows INTEGER NOT NULL,
+            valid_rows              INTEGER NOT NULL,
+            anomaly_rows            INTEGER NOT NULL
+        )
+    """)
     init_quality_table(conn)
     conn.commit()
 
@@ -73,6 +100,128 @@ def compute_anomaly_scores(df: pd.DataFrame) -> pd.DataFrame:
 
     df["is_anomaly"] = (df["anomaly_score"] > 3.0).astype(int)
     return df
+
+
+def table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,)
+    ).fetchone()
+    return row is not None
+
+
+def get_last_market_ingested_at(silver_conn):
+    row = silver_conn.execute(
+        "SELECT MAX(ingested_at) FROM clean_market_ticks"
+    ).fetchone()
+    return row[0] if row[0] else "1970-01-01"
+
+
+def compute_market_scores(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.sort_values(["symbol", "event_time"]).copy()
+    df["price_change_pct"] = 0.0
+    df["anomaly_score"] = 0.0
+
+    for symbol, group in df.groupby("symbol"):
+        prices = group["price"].astype(float)
+        pct_change = prices.pct_change().fillna(0.0) * 100
+        rolling_std = pct_change.rolling(window=30, min_periods=5).std().replace(0, np.nan)
+        score = (pct_change.abs() / rolling_std).replace([np.inf, -np.inf], 0).fillna(0.0)
+        df.loc[group.index, "price_change_pct"] = pct_change
+        df.loc[group.index, "anomaly_score"] = score
+
+    df["is_price_anomaly"] = (df["anomaly_score"] > 3.0).astype(int)
+    return df
+
+
+def run_market():
+    os.makedirs(os.path.dirname(SILVER_DB), exist_ok=True)
+    bronze_conn = sqlite3.connect(BRONZE_DB)
+    silver_conn = sqlite3.connect(SILVER_DB)
+    init_silver(silver_conn)
+
+    if not table_exists(bronze_conn, "raw_market_ticks"):
+        print("[MARKET SILVER] No Bronze market table yet.")
+        bronze_conn.close()
+        silver_conn.close()
+        return 0
+
+    last_run = get_last_market_ingested_at(silver_conn)
+    print(f"[MARKET SILVER] Processing market ticks ingested after: {last_run}")
+
+    raw_df = pd.read_sql(
+        "SELECT * FROM raw_market_ticks WHERE ingested_at > ?",
+        bronze_conn, params=(last_run,)
+    )
+
+    if raw_df.empty:
+        print("[MARKET SILVER] No new market ticks to process.")
+        bronze_conn.close()
+        silver_conn.close()
+        return 0
+
+    df = raw_df.copy()
+    duplicate_rows = int(df.duplicated(subset="tick_id").sum())
+    df = df.drop_duplicates(subset="tick_id")
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+    invalid_price_rows = int((df["price"].isna() | (df["price"] <= 0)).sum())
+    df = df[df["price"] > 0].copy()
+    parsed_event_time = pd.to_datetime(df["event_time"], errors="coerce")
+    invalid_event_time_rows = int(parsed_event_time.isna().sum())
+    df["event_time"] = parsed_event_time.dt.strftime("%Y-%m-%dT%H:%M:%S")
+    df = df[df["event_time"].notna()].copy()
+    df["source"] = df["source"].fillna("unknown")
+    df["symbol"] = df["symbol"].str.upper()
+    df = df[df["symbol"].notna()].copy()
+    df["transformed_at"] = datetime.utcnow().isoformat()
+
+    df = compute_market_scores(df)
+
+    cols = ["tick_id", "event_time", "ingested_at", "source", "symbol",
+            "price", "volume", "price_change_pct", "is_price_anomaly",
+            "anomaly_score", "transformed_at"]
+
+    written = 0
+    for _, row in df[cols].iterrows():
+        try:
+            cursor = silver_conn.execute("""
+                INSERT OR IGNORE INTO clean_market_ticks VALUES
+                (?,?,?,?,?,?,?,?,?,?,?)
+            """, tuple(row))
+            written += cursor.rowcount
+        except Exception as e:
+            print(f"[MARKET SILVER] Skip {row['tick_id']}: {e}")
+
+    report = {
+        "input_rows": int(len(raw_df)),
+        "duplicate_rows": duplicate_rows,
+        "invalid_price_rows": invalid_price_rows,
+        "invalid_event_time_rows": invalid_event_time_rows,
+        "valid_rows": int(len(df)),
+        "anomaly_rows": int(df["is_price_anomaly"].sum()) if not df.empty else 0,
+    }
+    silver_conn.execute("""
+        INSERT INTO market_quality_runs
+        (checked_at, input_rows, duplicate_rows, invalid_price_rows,
+         invalid_event_time_rows, valid_rows, anomaly_rows)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datetime.utcnow().isoformat(),
+        report["input_rows"],
+        report["duplicate_rows"],
+        report["invalid_price_rows"],
+        report["invalid_event_time_rows"],
+        report["valid_rows"],
+        report["anomaly_rows"],
+    ))
+
+    silver_conn.commit()
+    bronze_conn.close()
+    silver_conn.close()
+    print(f"[MARKET SILVER] ✅ Wrote {written} market ticks to Silver.")
+    print(f"[MARKET SILVER] Data quality: {report}")
+    return written
 
 
 def run():

@@ -10,8 +10,10 @@ import silver_to_gold
 
 def run_once() -> tuple[int, int]:
     silver_rows = bronze_to_silver.run()
+    market_silver_rows = bronze_to_silver.run_market()
     gold_rows = silver_to_gold.run()
-    return silver_rows, gold_rows
+    market_gold_rows = silver_to_gold.run_market()
+    return silver_rows + market_silver_rows, gold_rows + market_gold_rows
 
 
 def run_forever(interval_seconds: int) -> None:
